@@ -32,9 +32,16 @@ app.post('/create-emergency-event/:username', async (req, res) => {
     const { username } = req.params;
     const { location, description, auth0Id } = req.body;
 
+    if (!location || !location.latitude || !location.longitude) {
+      return res.status(400).send('Invalid location data');
+    }
+
     const emergencyData = {
       _id: new mongoose.Types.ObjectId(),
-      location,
+      location: {
+        latitude: parseFloat(location.latitude),
+        longitude: parseFloat(location.longitude),
+      },
       description,
       images: [],
       audio: null,

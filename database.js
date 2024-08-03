@@ -8,7 +8,10 @@ mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
   .catch(err => console.error('Failed to connect to MongoDB', err));
 
 const emergencyDataSchema = new mongoose.Schema({
-  location: String,
+  location: {
+    latitude: { type: Number, required: true },
+    longitude: { type: Number, required: true }
+  },
   description: String,
   images: [{
     data: Buffer,
