@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { User } = require('./database');
 const cors = require('cors');
-const mongoose = require('mongoose'); // Add mongoose
+const mongoose = require('mongoose');
 
 const app = express();
 const upload = multer(); // Initialize multer for handling file uploads

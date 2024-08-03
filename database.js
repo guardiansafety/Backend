@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
+require('dotenv').config(); // Load environment variables from .env file
 
-// MongoDB connection URI
-const uri = 'mongodb+srv://ht6usernaeme:Ht6PasswordSecurity!@ht6cluster.rmjdwzv.mongodb.net/myDatabase';
+// MongoDB connection URI from .env file
+const uri = process.env.MONGODB_URI;
 
 // Connect to MongoDB
 mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
