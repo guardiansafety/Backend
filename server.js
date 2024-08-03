@@ -1,10 +1,14 @@
 const express = require('express');
 const multer = require('multer');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const fs = require("fs");
+const mongoose = require('mongoose');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 const cors = require('cors');
+const moment = require('moment-timezone');
+require('dotenv').config();
+
+const { User } = require('./database');
 
 const app = express();
 app.use(cors());
@@ -14,49 +18,120 @@ const upload = multer({ dest: 'uploads/' });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-function fileToGenerativePart(path, mimeType) {
+function fileToGenerativePart(filePath, mimeType) {
   return {
     inlineData: {
-      data: Buffer.from(fs.readFileSync(path)).toString("base64"),
+      data: fs.readFileSync(filePath).toString('base64'),
       mimeType
     },
   };
 }
 
-app.post('/describe', upload.array('images'), async (req, res) => {
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-  const prompt = 'Describe the surroundings and things in the image in detail.';
+app.post('/create-emergency-event/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { location, description, auth0Id } = req.body;
 
-  let imageParts = [];
+    const emergencyData = {
+      _id: new mongoose.Types.ObjectId(),
+      location,
+      description,
+      images: [],
+      audio: null,
+      timestamp: moment().tz("America/Toronto").format(),
+    };
 
-  for (const file of req.files) {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const mimeType = file.mimetype.toLowerCase();
+    const user = await User.findOneAndUpdate(
+      { username, auth0Id },
+      { 
+        $set: { auth0Id, username },
+        $push: { emergency_data: emergencyData } 
+      },
+      { new: true, upsert: true }
+    );
 
-    console.log('File path:', file.path); // Log file path
-    console.log('File original name:', file.originalname); // Log file original name
-    console.log('File extension:', ext); // Log file extension
-    console.log('MIME type:', mimeType); // Log MIME type
-
-    if ((ext === '.png' && mimeType === 'image/png') ||
-        (ext === '.jpg' && mimeType === 'image/jpeg') ||
-        (ext === '.jpeg' && mimeType === 'image/jpeg')) {
-      imageParts.push(fileToGenerativePart(file.path, mimeType));
-      fs.unlinkSync(file.path); // Delete the image file after it has been processed
-    } else {
-      return res.status(400).send({ error: `Unsupported file type: ${ext}` });
-    }
+    res.status(200).json({
+      message: 'Emergency event created successfully',
+      emergencyId: emergencyData._id,
+    });
+  } catch (error) {
+    console.error('Error creating emergency event:', error);
+    res.status(500).send('Error creating emergency event');
   }
-
-  const result = await model.generateContent([prompt, ...imageParts]);
-  const response = await result.response;
-  const text = response.text();
-
-  console.log('AI response:', text); // Log AI response
-
-  res.send({ description: text });
 });
 
-app.listen(3005, () => {
-  console.log('Server started on port 3005');
+app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), async (req, res) => {
+  try {
+    const { username, emergencyId } = req.params;
+
+    if (!req.files || req.files.length === 0) {
+      console.error('No image files uploaded');
+      return res.status(400).send('No image files uploaded');
+    }
+
+    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = 'Describe the surroundings and things in the image in about 50 words.';
+
+    let allDescriptions = [];
+
+    for (const file of req.files) {
+      const imagePart = fileToGenerativePart(file.path, file.mimetype);
+      
+      const result = await model.generateContent([prompt, imagePart]);
+      const response = await result.response;
+      const text = response.text();
+      
+      allDescriptions.push(text);
+      
+      // Clean up the file after processing
+      fs.unlinkSync(file.path);
+    }
+
+    const combinedDescription = allDescriptions.join('\n\n');
+
+    // Update the emergency event description with the generated text
+    const user = await User.findOneAndUpdate(
+      {
+        username,
+        'emergency_data._id': new mongoose.Types.ObjectId(emergencyId),
+      },
+      {
+        $set: { 'emergency_data.$.description': combinedDescription },
+        $push: { 'emergency_data.$.images': req.files.map(file => ({ data: file.buffer, contentType: file.mimetype })) }
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      console.error('User or emergency event not found');
+      return res.status(404).send('User or emergency event not found');
+    }
+
+    res.status(200).json({ message: 'Images added and description updated successfully', description: combinedDescription });
+  } catch (error) {
+    console.error('Error adding images to emergency event:', error);
+    res.status(500).send('Error adding images to emergency event');
+  }
+});
+
+// Endpoint to get user profile data
+app.get('/profile', async (req, res) => {
+  try {
+    const username = req.query.username;
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).send('Error fetching profile');
+  }
+});
+
+const port = 3006;
+app.listen(port, () => {
+  console.log(`Server started on port ${port}`);
 });

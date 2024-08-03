@@ -1,52 +1,58 @@
 const express = require('express');
 const multer = require('multer');
-const { User } = require('./database');
-const cors = require('cors');
 const mongoose = require('mongoose');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fs = require('fs');
+const path = require('path');
+const cors = require('cors');
+const moment = require('moment-timezone');
+require('dotenv').config();
+
+const { User } = require('./database');
 
 const app = express();
-const upload = multer(); // Initialize multer for handling file uploads
-
+app.use(cors());
 app.use(express.json());
-app.use(cors()); // Enable CORS
 
-// Route to create a new emergency event
-app.post('/create-emergency-event/:userId', upload.single('audio'), async (req, res) => {
+const upload = multer({ dest: 'uploads/' });
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+function fileToGenerativePart(filePath, mimeType) {
+  return {
+    inlineData: {
+      data: fs.readFileSync(filePath).toString('base64'),
+      mimeType,
+    },
+  };
+}
+
+app.post('/create-emergency-event/:username', async (req, res) => {
   try {
-    const { userId } = req.params;
-    const { location, description } = req.body;
+    const { username } = req.params;
+    const { location, description, auth0Id } = req.body;
 
-    let emergencyData = {
-      _id: new mongoose.Types.ObjectId(), // Generate a new ObjectId for this emergency event
+    const emergencyData = {
+      _id: new mongoose.Types.ObjectId(),
       location,
       description,
       images: [],
       audio: null,
-      timestamp: new Date() // Add timestamp
+      timestamp: moment().tz("America/Toronto").toDate(),
     };
 
-    // Process audio file if present
-    if (req.file) {
-      emergencyData.audio = {
-        data: req.file.buffer,
-        contentType: req.file.mimetype
-      };
-    }
-
-    // Find the user and add the new emergency data
     const user = await User.findOneAndUpdate(
-      { auth0Id: userId },
-      { $push: { emergency_data: emergencyData } },
+      { username, auth0Id },
+      { 
+        $set: { auth0Id, username },
+        $push: { emergency_data: emergencyData } 
+      },
       { new: true, upsert: true }
     );
 
-    if (!user) {
-      return res.status(404).send('User not found');
-    }
-
-    res.status(200).json({ 
-      message: 'Emergency event created successfully', 
-      emergencyId: emergencyData._id 
+    res.status(200).json({
+      message: 'Emergency event created successfully',
+      emergencyId: emergencyData._id,
     });
   } catch (error) {
     console.error('Error creating emergency event:', error);
@@ -54,114 +60,68 @@ app.post('/create-emergency-event/:userId', upload.single('audio'), async (req, 
   }
 });
 
-// Route to add an image to an existing emergency event
-app.post('/add-emergency-image/:userId/:emergencyId', upload.single('image'), async (req, res) => {
+app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), async (req, res) => {
   try {
-    const { userId, emergencyId } = req.params;
+    const { username, emergencyId } = req.params;
 
-    if (!req.file) {
-      return res.status(400).send('No image file uploaded');
+    if (!req.files) {
+      console.error('No image files uploaded');
+      return res.status(400).send('No image files uploaded');
     }
 
-    const imageData = {
-      data: req.file.buffer,
-      contentType: req.file.mimetype
-    };
+    const imageParts = req.files.map(file => fileToGenerativePart(file.path, file.mimetype));
 
-    // Find the user and add the image to the specific emergency event
+    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = 'Describe the surroundings and things in the image in detail.';
+
+    const result = await model.generateContent({
+      inputs: [prompt, ...imageParts]
+    });
+
+    const text = result.generatedContent[0].text;
+
+    console.log('Generated text:', text);
+
+    // Update the emergency event description with the generated text
     const user = await User.findOneAndUpdate(
-      { 
-        auth0Id: userId, 
-        'emergency_data._id': mongoose.Types.ObjectId(emergencyId) 
+      {
+        username,
+        'emergency_data._id': mongoose.Types.ObjectId(emergencyId),
       },
-      { 
-        $push: { 'emergency_data.$.images': imageData } 
+      {
+        $set: { 'emergency_data.$.description': text },
       },
       { new: true }
     );
 
     if (!user) {
+      console.error('User or emergency event not found');
       return res.status(404).send('User or emergency event not found');
     }
 
-    res.status(200).json({ message: 'Image added successfully to the emergency event' });
+    res.status(200).json({ message: 'Images added and description updated successfully' });
   } catch (error) {
-    console.error('Error adding image to emergency event:', error);
-    res.status(500).send('Error adding image to emergency event');
+    console.error('Error adding images to emergency event:', error);
+    res.status(500).send('Error adding images to emergency event');
+  } finally {
+    req.files.forEach(file => fs.unlinkSync(file.path)); // Cleanup uploaded files
   }
 });
 
 // Endpoint to get user profile data
 app.get('/profile', async (req, res) => {
   try {
-    const userId = req.query.userId; // Assume userId is passed as a query parameter
-    const user = await User.findOne({ auth0Id: userId });
+    const username = req.query.username;
+    const user = await User.findOne({ username });
 
     if (!user) {
       return res.status(404).send('User not found');
     }
 
-    res.json(user); // Ensure we send JSON response
+    res.json(user);
   } catch (error) {
     console.error('Error fetching profile:', error);
     res.status(500).send('Error fetching profile');
-  }
-});
-
-// Endpoint to update emergency data
-app.post('/emergency-data', async (req, res) => {
-  try {
-    const userId = req.body.auth0Id; // Assume auth0Id is passed in the body
-    const { emergency_data } = req.body;
-
-    const user = await User.findOneAndUpdate(
-      { auth0Id: userId },
-      { $set: { emergency_data } },
-      { new: true, upsert: true }
-    );
-
-    res.status(200).send(user);
-  } catch (error) {
-    console.error('Error updating emergency data:', error);
-    res.status(500).send('Error updating emergency data');
-  }
-});
-
-// Endpoint to create or update user
-app.post('/api/users', async (req, res) => {
-  try {
-    const { auth0Id, username, email, emergency_data } = req.body;
-
-    const user = await User.findOneAndUpdate(
-      { auth0Id },
-      { username, email, emergency_data },
-      { new: true, upsert: true }
-    );
-
-    res.status(200).send(user);
-  } catch (error) {
-    console.error('Error creating or updating user:', error);
-    res.status(500).send('Error creating or updating user');
-  }
-});
-
-// Endpoint to update username and email in MongoDB
-app.put('/api/update-user', async (req, res) => {
-  try {
-    const userId = req.body.auth0Id; // Assume auth0Id is passed in the body
-    const { email, username } = req.body;
-
-    // Update user in MongoDB
-    const updatedUser = await User.findOneAndUpdate(
-      { auth0Id: userId },
-      { email, username },
-      { new: true }
-    );
-
-    res.status(200).send(updatedUser);
-  } catch (error) {
-    console.error('Error updating user:', error);
-    res.status(500).send('Error updating user');
   }
 });
 
