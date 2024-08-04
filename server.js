@@ -84,7 +84,7 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
 
     let allDescriptions = [];
 
-    for (const file of req.files) {
+    for (const file of req.files) { // holy crapi t works
       const imagePart = fileToGenerativePart(file.path, file.mimetype);
       
       const result = await model.generateContent([prompt, imagePart]);
