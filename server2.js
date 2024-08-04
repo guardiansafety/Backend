@@ -56,10 +56,18 @@ app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (
     const scores = await runPythonScript(photoPath);
 
     const user = await User.findOneAndUpdate(
-      { username, 'emergency_data._id': new mongoose.Types.ObjectId(emergencyId) },
+      { 
+        username, 
+        'emergency_data._id': new mongoose.Types.ObjectId(emergencyId) 
+      },
       { 
         $set: { 'emergency_data.$.emotions': scores },
-        $push: { 'emergency_data.$.images': { data: fs.readFileSync(photoPath), contentType: 'image/jpeg' } }
+        $push: { 
+          'emergency_data.$.images': { 
+            data: fs.readFileSync(photoPath), 
+            contentType: 'image/jpeg' 
+          } 
+        }
       },
       { new: true }
     );
