@@ -21,19 +21,19 @@ const emergencyDataSchema = new mongoose.Schema({
     data: Buffer,
     contentType: String
   },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, default: Date.now },
+  emotions: {
+    aggression: { type: Number, default: 0 },
+    hostility: { type: Number, default: 0 },
+    frustration: { type: Number, default: 0 }
+  }
 });
 
 const userSchema = new mongoose.Schema({
   auth0Id: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   email: { type: String },
-  emergency_data: [emergencyDataSchema],
-  emotions: {
-    aggression: { type: Number, default: 0 },
-    hostility: { type: Number, default: 0 },
-    frustration: { type: Number, default: 0 },
-  }
+  emergency_data: [emergencyDataSchema]
 });
 
 const User = mongoose.model('User', userSchema);
