@@ -16,7 +16,7 @@ const uri = process.env.MONGODB_URI;
 
 // Function to run the Python script and capture its output
 function runPythonScript(photoPath, callback) {
-  const command = `python process_photo.py "${photoPath}"`;
+  const command = `python3 process_photo.py "${photoPath}"`;
   console.log(`Executing command: ${command}`);  // Log the command being executed
   exec(command, (error, stdout, stderr) => {
     console.log(`stdout: ${stdout}`);
