@@ -28,7 +28,12 @@ const userSchema = new mongoose.Schema({
   auth0Id: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   email: { type: String },
-  emergency_data: [emergencyDataSchema]
+  emergency_data: [emergencyDataSchema],
+  emotions: {
+    aggression: { type: Number, default: 0 },
+    hostility: { type: Number, default: 0 },
+    frustration: { type: Number, default: 0 },
+  }
 });
 
 const User = mongoose.model('User', userSchema);

@@ -80,7 +80,7 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
     }
 
     const model = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const prompt = 'Describe the surroundings and things in the image in about 50 words.';
+    const prompt = 'Analyze the image and identify any potential threats, hazards, dangerous objects, in about 6 sentences. Describe the objects you detect that could pose a threat, including their types and possible dangers. Provide a brief summary of the overall threat level in the image. Also focus on describing the people in the foreground, as well as any unique things in the background that could help with location for first responders';
 
     let allDescriptions = [];
 
