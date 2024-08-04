@@ -54,6 +54,16 @@ app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (
     }
 
     const scores = await runPythonScript(photoPath);
+    console.log('Scores from Python script:', scores);
+
+    // Ensure scores match the schema
+    const validatedScores = {
+      aggression: scores.aggression || 0,
+      hostility: scores.hostility || 0,
+      frustration: scores.frustration || 0
+    };
+
+    console.log('Validated scores:', validatedScores);
 
     const user = await User.findOneAndUpdate(
       { 
@@ -61,7 +71,7 @@ app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (
         'emergency_data._id': new mongoose.Types.ObjectId(emergencyId) 
       },
       { 
-        $set: { 'emergency_data.$.emotions': scores },
+        $set: { 'emergency_data.$.emotions': validatedScores },
         $push: { 
           'emergency_data.$.images': { 
             data: fs.readFileSync(photoPath), 
@@ -73,15 +83,19 @@ app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (
     );
 
     if (!user) {
+      console.error('User or emergency event not found');
       return res.status(404).send('User or emergency event not found');
     }
+
+    console.log('Updated user:', JSON.stringify(user, null, 2));
 
     // Clean up the uploaded photo
     fs.unlinkSync(photoPath);
 
-    res.status(200).json({ message: 'Photo processed and scores updated successfully', scores });
+    res.status(200).json({ message: 'Photo processed and scores updated successfully', scores: validatedScores });
   } catch (error) {
     console.error('Error processing photo:', error);
+    console.error('Stack trace:', error.stack);
     res.status(500).send('Error processing photo');
   }
 });

@@ -4,12 +4,9 @@ from humeai_simulation import humeai_generate_scores
 
 def process_photo(photo_path):
     """Process the photo and generate scores using Hume AI simulation."""
-    # Define attacker-related emotion categories
-    categories = ['Aggression', 'Hostility', 'Frustration']
-    # All photos are classified as 'violent'
+    categories = ['aggression', 'hostility', 'frustration']  # Lowercase to match schema
     is_violent = True
     
-    # Generate scores based on classification using Hume AI simulation
     scores = humeai_generate_scores(categories, is_violent)
     
     return scores
