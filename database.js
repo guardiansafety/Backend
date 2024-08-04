@@ -25,7 +25,7 @@ const emergencyDataSchema = new mongoose.Schema({
 });
 
 const userSchema = new mongoose.Schema({
-  auth0Id: { type: String, required: true },
+  auth0Id: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   email: { type: String },
   emergency_data: [emergencyDataSchema]

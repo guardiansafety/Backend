@@ -36,6 +36,9 @@ app.post('/create-emergency-event/:username', async (req, res) => {
       return res.status(400).send('Invalid location data');
     }
 
+    // Convert Toronto time to a Date object
+    const timestamp = moment().tz("America/Toronto").toDate();
+
     const emergencyData = {
       _id: new mongoose.Types.ObjectId(),
       location: {
@@ -45,7 +48,7 @@ app.post('/create-emergency-event/:username', async (req, res) => {
       description,
       images: [],
       audio: null,
-      timestamp: moment().tz("America/Toronto").format(),
+      timestamp,  // Use the converted timestamp
     };
 
     const user = await User.findOneAndUpdate(
@@ -137,6 +140,55 @@ app.get('/profile', async (req, res) => {
     res.status(500).send('Error fetching profile');
   }
 });
+
+
+// geting all emergency data
+app.get('/get-all-emergencies', async (req, res) => {
+  try {
+    const users = await User.find({}, 'username emergency_data');
+    const emergencies = users.flatMap(user => 
+      user.emergency_data.map(event => ({ ...event.toObject(), username: user.username }))
+    );
+
+    res.json(emergencies);
+  } catch (error) {
+    console.error('Error fetching emergency events:', error);
+    res.status(500).send('Error fetching emergency events');
+  }
+});
+
+
+
+app.post('/create-or-update-user', async (req, res) => {
+  try {
+    console.log('Received request to create or update user:', req.body);
+    const { auth0Id, username, email } = req.body;
+
+    if (!auth0Id || !username) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    let user = await User.findOne({ auth0Id });
+    
+    if (user) {
+      // Update existing user
+      user.username = username;
+      if (email) user.email = email;
+      await user.save();
+    } else {
+      // Create new user
+      user = new User({ auth0Id, username, email, emergency_data: [] });
+      await user.save();
+    }
+    
+    console.log('User created or updated successfully:', user);
+    res.status(200).json({ message: 'User created or updated successfully', user });
+  } catch (error) {
+    console.error('Detailed error in create-or-update-user:', error);
+    res.status(500).json({ error: 'Error creating or updating user', details: error.message });
+  }
+});
+
 
 const port = 3006;
 app.listen(port, () => {
