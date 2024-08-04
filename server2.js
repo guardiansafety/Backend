@@ -1,131 +1,83 @@
 const express = require('express');
 const multer = require('multer');
-const mongoose = require('mongoose');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
-const cors = require('cors');
-const moment = require('moment-timezone');
+const { exec } = require('child_process');
+const mongoose = require('mongoose');
+const { User } = require('./database');
 require('dotenv').config();
 
-const { User } = require('./database');
-
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const uri = process.env.MONGODB_URI;
 
-function fileToGenerativePart(filePath, mimeType) {
-  return {
-    inlineData: {
-      data: fs.readFileSync(filePath).toString('base64'),
-      mimeType,
-    },
-  };
+mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('Failed to connect to MongoDB', err));
+
+// Function to run the Python script
+function runPythonScript(photoPath, outputJsonPath, callback) {
+  exec(`python process_photo.py ${photoPath} ${outputJsonPath}`, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return callback(error);
+    }
+    console.log(`stdout: ${stdout}`);
+    console.error(`stderr: ${stderr}`);
+    callback(null, outputJsonPath);
+  });
 }
 
-app.post('/create-emergency-event/:username', async (req, res) => {
-  try {
-    const { username } = req.params;
-    const { location, description, auth0Id } = req.body;
-
-    const emergencyData = {
-      _id: new mongoose.Types.ObjectId(),
-      location,
-      description,
-      images: [],
-      audio: null,
-      timestamp: moment().tz("America/Toronto").toDate(),
-    };
-
-    const user = await User.findOneAndUpdate(
-      { username, auth0Id },
-      { 
-        $set: { auth0Id, username },
-        $push: { emergency_data: emergencyData } 
-      },
-      { new: true, upsert: true }
-    );
-
-    res.status(200).json({
-      message: 'Emergency event created successfully',
-      emergencyId: emergencyData._id,
-    });
-  } catch (error) {
-    console.error('Error creating emergency event:', error);
-    res.status(500).send('Error creating emergency event');
-  }
-});
-
-app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), async (req, res) => {
+app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (req, res) => {
   try {
     const { username, emergencyId } = req.params;
+    const photoPath = req.file.path;
+    const outputJsonPath = path.join(__dirname, 'output_scores.json');
 
-    if (!req.files) {
-      console.error('No image files uploaded');
-      return res.status(400).send('No image files uploaded');
-    }
+    // Run the Python script to process the photo and generate scores
+    runPythonScript(photoPath, outputJsonPath, async (error) => {
+      if (error) {
+        return res.status(500).send('Error processing photo');
+      }
 
-    const imageParts = req.files.map(file => fileToGenerativePart(file.path, file.mimetype));
+      // Read the JSON output
+      const scores = JSON.parse(fs.readFileSync(outputJsonPath, 'utf8'));
 
-    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const prompt = 'Describe the surroundings and things in the image in detail.';
+      // Update the user and emergency schemas with the generated scores
+      const user = await User.findOneAndUpdate(
+        { username },
+        { $set: { emotions: scores } },
+        { new: true }
+      );
 
-    const result = await model.generateContent({
-      inputs: [prompt, ...imageParts]
+      if (!user) {
+        return res.status(404).send('User not found');
+      }
+
+      const emergencyDataIndex = user.emergency_data.findIndex(emergency => emergency._id.toString() === emergencyId);
+      if (emergencyDataIndex !== -1) {
+        user.emergency_data[emergencyDataIndex].emotions = scores;
+        await user.save();
+      } else {
+        return res.status(404).send('Emergency event not found');
+      }
+
+      // Clean up the uploaded photo and output JSON file
+      fs.unlinkSync(photoPath);
+      fs.unlinkSync(outputJsonPath);
+
+      res.status(200).json({ message: 'Photo processed and scores updated successfully', scores });
     });
-
-    const text = result.generatedContent[0].text;
-
-    console.log('Generated text:', text);
-
-    // Update the emergency event description with the generated text
-    const user = await User.findOneAndUpdate(
-      {
-        username,
-        'emergency_data._id': mongoose.Types.ObjectId(emergencyId),
-      },
-      {
-        $set: { 'emergency_data.$.description': text },
-      },
-      { new: true }
-    );
-
-    if (!user) {
-      console.error('User or emergency event not found');
-      return res.status(404).send('User or emergency event not found');
-    }
-
-    res.status(200).json({ message: 'Images added and description updated successfully' });
   } catch (error) {
-    console.error('Error adding images to emergency event:', error);
-    res.status(500).send('Error adding images to emergency event');
-  } finally {
-    req.files.forEach(file => fs.unlinkSync(file.path)); // Cleanup uploaded files
+    console.error('Error processing photo:', error);
+    res.status(500).send('Error processing photo');
   }
 });
 
-// Endpoint to get user profile data
-app.get('/profile', async (req, res) => {
-  try {
-    const username = req.query.username;
-    const user = await User.findOne({ username });
-
-    if (!user) {
-      return res.status(404).send('User not found');
-    }
-
-    res.json(user);
-  } catch (error) {
-    console.error('Error fetching profile:', error);
-    res.status(500).send('Error fetching profile');
-  }
-});
-
-const port = 3006;
+const port = 3007;
 app.listen(port, () => {
-  console.log(`Server started on port ${port}`);
+  console.log(`Hume AI Server started on port ${port}`);
 });
