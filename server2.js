@@ -14,15 +14,9 @@ const upload = multer({ dest: 'uploads/' });
 
 const uri = process.env.MONGODB_URI;
 
-/*
-mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('Failed to connect to MongoDB', err));
-*/
-
 // Function to run the Python script and capture its output
 function runPythonScript(photoPath, callback) {
-  const command = `python3 process_photo.py "${photoPath}"`;
+  const command = `python process_photo.py "${photoPath}"`;
   console.log(`Executing command: ${command}`);  // Log the command being executed
   exec(command, (error, stdout, stderr) => {
     console.log(`stdout: ${stdout}`);
@@ -62,7 +56,7 @@ app.post('/upload-photo/:username/:emergencyId', upload.single('photo'), async (
 
       // Update the emergency_data for the specific emergency event with the generated scores
       const user = await User.findOneAndUpdate(
-        { username, 'emergency_data._id': emergencyId },
+        { username, 'emergency_data._id': mongoose.Types.ObjectId(emergencyId) },
         { $set: { 'emergency_data.$.emotions': scores } },
         { new: true }
       );
