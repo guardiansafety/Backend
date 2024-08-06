@@ -190,6 +190,39 @@ app.post('/create-or-update-user', async (req, res) => {
 });
 
 
+
+app.get('/most-recent-emergencies', async (req, res) => {
+  try {
+    const recentEmergencies = await User.aggregate([
+      { $unwind: "$emergency_data" },
+      { $sort: { "emergency_data.timestamp": -1 } },
+      { $limit: 5 },
+      { 
+        $project: {
+          username: 1,
+          "emergency_data.description": 1,
+          "emergency_data.timestamp": 1,
+          "emergency_data.location": 1
+        }
+      }
+    ]);
+
+    const formattedEmergencies = recentEmergencies.map(e => ({
+      username: e.username,
+      description: e.emergency_data.description,
+      timestamp: e.emergency_data.timestamp,
+      location: e.emergency_data.location
+    }));
+
+    res.json(formattedEmergencies);
+  } catch (error) {
+    console.error('Error fetching most recent emergencies:', error);
+    res.status(500).send('Error fetching most recent emergencies');
+  }
+});
+
+
+
 const port = 3006;
 app.listen(port, () => {
   console.log(`Server started on port ${port}`);
