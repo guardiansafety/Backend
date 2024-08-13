@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const moment = require('moment-timezone');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const { User } = require('./database');
@@ -26,6 +28,72 @@ function fileToGenerativePart(filePath, mimeType) {
     },
   };
 }
+
+
+
+// Registration endpoint
+app.post('/register', async (req, res) => {
+  try {
+    const { username, password, email } = req.body;
+    
+    console.log('Attempting to register user:', username);
+    
+    const existingUser = await User.findOne({ $or: [{ username }, { email }] });
+    if (existingUser) {
+      console.log('Registration failed: User already exists');
+      return res.status(400).json({ error: 'Username or email already exists' });
+    }
+
+    console.log('Creating new user...');
+    const user = new User({ username, email, password });
+    await user.save();
+
+    console.log('User created successfully. Generating token...');
+    const token = jwt.sign({ userId: user._id }, process.env.VITE_JWT_SECRET, { expiresIn: '7d' });
+    
+    console.log('Registration successful');
+    res.status(201).json({ message: 'User registered successfully', token, username: user.username });
+  } catch (error) {
+    console.error('Detailed registration error:', error);
+    res.status(500).json({ error: 'Error registering user. Please try again.', details: error.message });
+  }
+});
+
+
+// Login endpoint
+app.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign({ userId: user._id }, process.env.VITE_JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, username: user.username });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Error logging in' });
+  }
+});
+
+
+// Verify token endpoint
+app.post('/verify-token', async (req, res) => {
+  const token = req.body.token;
+  if (!token) return res.status(400).json({ isValid: false });
+  
+  try {
+    const decoded = jwt.verify(token, process.env.VITE_JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+    if (!user) return res.json({ isValid: false });
+    res.json({ isValid: true, username: user.username });
+  } catch (error) {
+    res.json({ isValid: false });
+  }
+});
+
 
 app.post('/create-emergency-event/:username', async (req, res) => {
   try {
@@ -102,8 +170,6 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
     const response = await result.response;
     const description = response.text();
 
-    req.files.forEach(file => fs.unlinkSync(file.path));
-
     const user = await User.findOneAndUpdate(
       {
         username,
@@ -125,21 +191,34 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
   } catch (error) {
     console.error('Error adding images to emergency event:', error);
     res.status(500).send('Error adding images to emergency event');
+  } finally {
+    // Ensure all uploaded files are deleted after analysis and use
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        fs.unlink(file.path, err => {
+          if (err) {
+            console.error(`Failed to delete file: ${file.path}`, err);
+          }
+        });
+      });
+    }
   }
 });
-
 
 
 // Endpoint to get user profile data
 app.get('/profile', async (req, res) => {
   try {
-    const username = req.query.username;
-    const user = await User.findOne({ username });
+    const auth0Id = req.query.auth0Id;
+    console.log('Fetching profile for auth0Id:', auth0Id);
+    const user = await User.findOne({ auth0Id });
 
     if (!user) {
+      console.log('User not found for auth0Id:', auth0Id);
       return res.status(404).send('User not found');
     }
 
+    console.log('User found:', user);
     res.json(user);
   } catch (error) {
     console.error('Error fetching profile:', error);
@@ -165,6 +244,12 @@ app.get('/get-all-emergencies', async (req, res) => {
 
 
 
+app.post('/logout', (req, res) => {
+  // invalidate the token
+  // For a simple implementation, you can just send a success response
+  res.json({ message: 'Logged out successfully' });
+});
+
 app.post('/create-or-update-user', async (req, res) => {
   try {
     console.log('Received request to create or update user:', req.body);
@@ -177,12 +262,12 @@ app.post('/create-or-update-user', async (req, res) => {
     let user = await User.findOne({ auth0Id });
     
     if (user) {
-      // Update existing user
+      console.log('Updating existing user:', user);
       user.username = username;
       if (email) user.email = email;
       await user.save();
     } else {
-      // Create new user
+      console.log('Creating new user');
       user = new User({ auth0Id, username, email, emergency_data: [] });
       await user.save();
     }
