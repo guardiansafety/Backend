@@ -30,13 +30,12 @@ function fileToGenerativePart(filePath, mimeType) {
 app.post('/create-emergency-event/:username', async (req, res) => {
   try {
     const { username } = req.params;
-    const { location, description, auth0Id } = req.body;
+    const { location, description } = req.body;
 
     if (!location || !location.latitude || !location.longitude) {
       return res.status(400).send('Invalid location data');
     }
 
-    // Convert Toronto time to a Date object
     const timestamp = moment().tz("America/Toronto").toDate();
 
     const emergencyData = {
@@ -45,20 +44,27 @@ app.post('/create-emergency-event/:username', async (req, res) => {
         latitude: parseFloat(location.latitude),
         longitude: parseFloat(location.longitude),
       },
-      description,
+      description: description || 'Pending AI analysis', // Use a placeholder if description is empty
       images: [],
       audio: null,
-      timestamp,  // Use the converted timestamp
+      timestamp,
     };
 
-    const user = await User.findOneAndUpdate(
-      { username, auth0Id },
-      { 
-        $set: { auth0Id, username },
-        $push: { emergency_data: emergencyData } 
-      },
-      { new: true, upsert: true }
-    );
+    let user = await User.findOne({ username });
+
+    if (user) {
+      user = await User.findOneAndUpdate(
+        { username },
+        { $push: { emergency_data: emergencyData } },
+        { new: true }
+      );
+    } else {
+      user = new User({ 
+        username, 
+        emergency_data: [emergencyData] 
+      });
+      await user.save();
+    }
 
     res.status(200).json({
       message: 'Emergency event created successfully',
@@ -70,6 +76,7 @@ app.post('/create-emergency-event/:username', async (req, res) => {
   }
 });
 
+
 app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), async (req, res) => {
   try {
     const { username, emergencyId } = req.params;
@@ -80,33 +87,30 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
     }
 
     const model = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const prompt = 'Analyze the image and identify any potential threats, hazards, dangerous objects, in about 80 words. Describe the objects you detect that could pose a threat, including their types and possible dangers. Provide a brief summary of the overall threat level in the image. Also focus on describing the people in the foreground, as well as any unique things in the background that could help with location for first responders';
+    
+    const imageParts = req.files.map(file => fileToGenerativePart(file.path, file.mimetype));
 
-    let allDescriptions = [];
+    const prompt = `Analyze the following ${req.files.length} images as a sequence of events. 
+    Provide a comprehensive description of the scene, focusing on:
+    1. The main subject or subjects across all images
+    2. Any changes or progression you observe from one image to the next
+    3. Key details about the environment or setting
+    4. Any notable actions or events taking place
+    Limit your response to about 100 words.`;
 
-    for (const file of req.files) { // holy crapi t works
-      const imagePart = fileToGenerativePart(file.path, file.mimetype);
-      
-      const result = await model.generateContent([prompt, imagePart]);
-      const response = await result.response;
-      const text = response.text();
-      
-      allDescriptions.push(text);
-      
-      // Clean up the file after processing
-      fs.unlinkSync(file.path);
-    }
+    const result = await model.generateContent([prompt, ...imageParts]);
+    const response = await result.response;
+    const description = response.text();
 
-    const combinedDescription = allDescriptions.join('\n\n');
+    req.files.forEach(file => fs.unlinkSync(file.path));
 
-    // Update the emergency event description with the generated text
     const user = await User.findOneAndUpdate(
       {
         username,
         'emergency_data._id': new mongoose.Types.ObjectId(emergencyId),
       },
       {
-        $set: { 'emergency_data.$.description': combinedDescription },
+        $set: { 'emergency_data.$.description': description },
         $push: { 'emergency_data.$.images': req.files.map(file => ({ data: file.buffer, contentType: file.mimetype })) }
       },
       { new: true }
@@ -117,12 +121,14 @@ app.post('/add-emergency-image/:username/:emergencyId', upload.array('images'), 
       return res.status(404).send('User or emergency event not found');
     }
 
-    res.status(200).json({ message: 'Images added and description updated successfully', description: combinedDescription });
+    res.status(200).json({ message: 'Images added and description updated successfully', description });
   } catch (error) {
     console.error('Error adding images to emergency event:', error);
     res.status(500).send('Error adding images to emergency event');
   }
 });
+
+
 
 // Endpoint to get user profile data
 app.get('/profile', async (req, res) => {
