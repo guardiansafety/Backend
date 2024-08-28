@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+
 require('dotenv').config();
 
 const uri = process.env.MONGODB_URI;
@@ -30,12 +32,25 @@ const emergencyDataSchema = new mongoose.Schema({
 });
 
 const userSchema = new mongoose.Schema({
-  auth0Id: { type: String, required: true, unique: true },
-  username: { type: String, required: true },
-  email: { type: String },
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+
   emergency_data: [emergencyDataSchema]
 });
+userSchema.pre('save', async function(next) {
+  if (this.isModified('password')) {
+    this.password = await bcrypt.hash(this.password, 10);
+  }
+  next();
+});
+
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return bcrypt.compare(candidatePassword, this.password);
+};
 
 const User = mongoose.model('User', userSchema);
+
+
 
 module.exports = { User };
